@@ -1,0 +1,64 @@
+# Agent Cloud Drive - production stack (Postgres + S3-compatible + cloud service)
+#
+# This compose file is for full self-hosted production mode.
+# For local dev (SQLite + local disk), use:
+#   cd packages/cloud && uvicorn app.main:app --reload
+#
+# Usage:
+#   docker compose up -d
+#   # Server is on http://127.0.0.1:18000
+#
+# Environment variables consumed by the cloud service:
+#   AGENTYUN_DATABASE_URL=postgresql://agentyun:agentyun@db:5432/agentyun
+#   AGENTYUN_ASSET_STORAGE_DIR=/var/agentyun/assets
+#   AGENTYUN_JWT_SECRET=<change-me>
+
+version: "3.9"
+
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: agentyun
+      POSTGRES_PASSWORD: agentyun
+      POSTGRES_DB: agentyun
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U agentyun"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: agentyun
+      MINIO_ROOT_PASSWORD: agentyun-secret
+    volumes:
+      - miniodata:/data
+    ports:
+      - "9001:9001"
+
+  cloud:
+    build:
+      context: .
+      dockerfile: packages/cloud/Dockerfile
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      AGENTYUN_DATABASE_URL: postgresql://agentyun:agentyun@db:5432/agentyun
+      AGENTYUN_ASSET_STORAGE_DIR: /var/agentyun/assets
+      AGENTYUN_JWT_SECRET: change-me-in-production-please
+      AGENTYUN_DEBUG: "false"
+    volumes:
+      - assetdata:/var/agentyun/assets
+    ports:
+      - "18000:8000"
+
+volumes:
+  pgdata:
+  miniodata:
+  assetdata:

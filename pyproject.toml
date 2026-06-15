@@ -1,0 +1,11 @@
+[project]
+name = "agentyun-workspace"
+version = "0.1.0"
+description = "Agent Cloud Drive - open-source key-based cloud memory layer for AI agents"
+requires-python = ">=3.9"
+
+[tool.uv.workspace]
+members = ["packages/sdk", "packages/cli", "packages/cloud"]
+
+[tool.uv.sources]
+agentyun-sdk = { workspace = true }
