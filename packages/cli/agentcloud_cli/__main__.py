@@ -5,8 +5,11 @@ import click
 from .commands import register, login, sync, memory, status, server, share
 
 
+__version__ = "0.3.0"
+
+
 @click.group()
-@click.version_option()
+@click.version_option(__version__, prog_name="agentcloud")
 def main():
     """AgentCloud - key-based cloud memory for AI agents.
 
