@@ -206,75 +206,92 @@ window.copyToClipboard = copyToClipboard;
 
 
 // ========== Key request form (app.html) ==========
-// v1: collects request + shows a generated demo key. Real issuance
-// happens via a webhook to the maintainer in the background.
+// v0.4: real backend integration — POST to /v1/auth/register on the cloud.
+//
+// The cloud URL is read from <meta name="agentcloud-server"> in app.html.
+// Defaults to localhost:18000 for dev. In production, set it to the
+// Cloudflare Tunnel / production server URL.
 
-const DEMO_KEY_PREFIX = 'AC';
-
-function genDemoKey() {
-    // Looks like a real AgentCloud master key (base58, ~44 chars).
-    // Note: not derived from server — purely client-side demo.
-    const alphabet = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
-    let s = DEMO_KEY_PREFIX;
-    for (let i = 0; i < 42; i++) s += alphabet[Math.floor(Math.random() * alphabet.length)];
-    return s;
-}
-
-function genRecoveryCode() {
-    const alphabet = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
-    let s = '';
-    for (let i = 0; i < 32; i++) s += alphabet[Math.floor(Math.random() * alphabet.length)];
-    return s;
+function getServerUrl() {
+    const meta = document.querySelector('meta[name="agentcloud-server"]');
+    if (meta && meta.content) return meta.content.replace(/\/$/, '');
+    return 'http://127.0.0.1:18000';
 }
 
 async function submitRequest(form) {
     const data = new FormData(form);
-    const payload = {
-        email: data.get('email') || '',
-        name: data.get('name') || '',
-        use_case: data.get('use_case') || '',
-        agent_platform: data.get('agent_platform') || '',
-        created_at: new Date().toISOString(),
-    };
+    const label = (data.get('name') || '').trim() || 'agent';
 
-    // Generate demo key locally (will be replaced by real issuance once
-    // /v1/auth/register is wired up to this form via API)
-    const key = genDemoKey();
-    const recovery = genRecoveryCode();
-    const keyId = key.slice(2, 18);
+    const submitBtn = form.querySelector('button[type="submit"]');
+    const originalText = submitBtn.textContent;
+    submitBtn.disabled = true;
+    submitBtn.textContent = '生成中…';
 
-    // Show the key panel
     const result = document.getElementById('key-result');
-    result.style.display = 'block';
-    document.getElementById('key-id').textContent = keyId;
-    document.getElementById('key-value').textContent = key;
-    document.getElementById('key-recovery').textContent = recovery;
-    document.getElementById('key-result').scrollIntoView({ behavior: 'smooth', block: 'center' });
+    const successAlert = document.getElementById('success-alert');
+    const errorAlert = document.getElementById('error-alert');
+    successAlert.classList.remove('alert--show');
+    errorAlert.classList.remove('alert--show');
 
-    // Persist locally so the user can come back and see it
-    const existing = JSON.parse(localStorage.getItem('agentcloud.keys') || '[]');
-    existing.unshift({
-        key_id: keyId,
-        key,
-        recovery,
-        label: payload.name || payload.email,
-        created_at: payload.created_at,
-    });
-    localStorage.setItem('agentcloud.keys', JSON.stringify(existing.slice(0, 5)));
-    renderKeyList();
+    try {
+        // Real backend call: POST /v1/auth/register
+        const resp = await fetch(getServerUrl() + '/v1/auth/register', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ label }),
+        });
 
-    // Optional: send request payload to a webhook (Formspree / Google Forms)
-    // Left as a plug-in point. To enable, set window.AGENTCLOUD_WEBHOOK.
-    if (window.AGENTCLOUD_WEBHOOK) {
-        try {
-            await fetch(window.AGENTCLOUD_WEBHOOK, {
+        if (!resp.ok) {
+            const errBody = await resp.json().catch(() => ({}));
+            throw new Error(errBody.detail || `HTTP ${resp.status}`);
+        }
+
+        const body = await resp.json();
+        const key = body.key;
+        const recovery = body.recovery_code;
+        const keyId = body.key_id;
+
+        // Show the key panel
+        result.style.display = 'block';
+        document.getElementById('key-id').textContent = keyId;
+        document.getElementById('key-value').textContent = key;
+        document.getElementById('key-recovery').textContent = recovery;
+        successAlert.classList.add('alert--show');
+        result.scrollIntoView({ behavior: 'smooth', block: 'center' });
+
+        // Persist locally so the user can come back and see it
+        const existing = JSON.parse(localStorage.getItem('agentcloud.keys') || '[]');
+        existing.unshift({
+            key_id: keyId,
+            key,
+            recovery,
+            label,
+            server: getServerUrl(),
+            created_at: new Date().toISOString(),
+        });
+        localStorage.setItem('agentcloud.keys', JSON.stringify(existing.slice(0, 5)));
+        renderKeyList();
+
+        // Optional webhook
+        if (window.AGENTCLOUD_WEBHOOK) {
+            fetch(window.AGENTCLOUD_WEBHOOK, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ ...payload, key, recovery, key_id: keyId }),
-            });
-        } catch (e) {
-            console.warn('webhook delivery failed', e);
+                body: JSON.stringify({
+                    email: data.get('email') || '',
+                    name: label,
+                    use_case: data.get('use_case') || '',
+                    agent_platform: data.get('agent_platform') || '',
+                    key, recovery, key_id: keyId,
+                }),
+            }).catch(() => {});
         }
+    } catch (e) {
+        errorAlert.textContent = '✗ 生成失败：' + e.message + '（请检查后端服务是否运行）';
+        errorAlert.classList.add('alert--show');
+    } finally {
+        submitBtn.disabled = false;
+        submitBtn.textContent = originalText;
     }
 }
 
